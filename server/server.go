@@ -20,8 +20,10 @@ type Server struct {
 }
 
 func NewServer(address string) *Server {
+	dbMap := make(map[string]*types.DataArgs)
+
 	store := &types.Store{
-		Db: types.NewQueue[types.DataArgs](),
+		Db: &dbMap,
 	}
 
 	return &Server{
@@ -87,42 +89,71 @@ func (s *Server) ReadConnections(conn net.Conn) {
 
 		data := buf[:n]
 
-		s.handleCommand(conn, cmd, data)
+		s.dataParser(conn, cmd, data)
 	}
 }
 
-func (s *Server) handleCommand(conn net.Conn, cmd *types.ServerCmd, data []byte) {
+func (s *Server) dataParser(conn net.Conn, cmd *types.ServerCmd, data []byte) {
 	dataSlice := strings.Split(string(data), " ")
 
 	switch dataSlice[0] != "" {
+	case dataSlice[0] != "set" && dataSlice[0] != "get" && dataSlice[0] != "add" && dataSlice[0] != "replace" && dataSlice[0] != "append" && dataSlice[0] != "prepend":
+		cmd.DataBlock = string(data)
 	case dataSlice[0] == "set":
 		cmd.Command = string(data)
 		cmd.DataBlock = ""
-	case dataSlice[0] != "set" && dataSlice[0] != "get":
-		cmd.DataBlock = string(data)
 	case dataSlice[0] == "get":
 		cmd.Command = string(data)
+	case dataSlice[0] == "add":
+		cmd.Command = string(data)
+		cmd.DataBlock = ""
+	case dataSlice[0] == "replace":
+		cmd.Command = string(data)
+		cmd.DataBlock = ""
+	case dataSlice[0] == "append":
+		cmd.Command = string(data)
+		cmd.DataBlock = ""
+	case dataSlice[0] == "prepend":
+		cmd.Command = string(data)
+		cmd.DataBlock = ""
 	}
 
-	str := strings.Split(cmd.Command, " ")
+	s.commandParser(cmd, conn)
+}
 
-	switch str[0] != "" {
-	case str[0] == "set" && cmd.DataBlock != "":
+func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
+	parsedCmd := strings.Split(cmd.Command, " ")
+
+	switch parsedCmd[0] != "" {
+	case parsedCmd[0] == "set" && cmd.DataBlock != "":
 		result := handleSetData(*cmd, s.Store)
 		conn.Write([]byte(result))
 		cmd.Command = ""
 		cmd.DataBlock = ""
-	case str[0] == "get":
-		result := handleGetData(dataSlice, s.Store)
+	case parsedCmd[0] == "get":
+		result := handleGetData(parsedCmd, s.Store)
 		conn.Write([]byte(result))
-	case str[0] == "add":
-		result := handleAddData(dataSlice, s.Store)
+	case parsedCmd[0] == "add" && cmd.DataBlock != "":
+		result := handleAddData(*cmd, s.Store)
 		conn.Write([]byte(result))
-	case str[0] == "replace":
-		result := handleReplaceData(dataSlice, s.Store)
+		cmd.Command = ""
+		cmd.DataBlock = ""
+	case parsedCmd[0] == "replace" && cmd.DataBlock != "":
+		result := handleReplaceData(*cmd, s.Store)
 		conn.Write([]byte(result))
+		cmd.Command = ""
+		cmd.DataBlock = ""
+	case parsedCmd[0] == "append" && cmd.DataBlock != "":
+		result := handleAppendData(*cmd, s.Store)
+		conn.Write([]byte(result))
+		cmd.Command = ""
+		cmd.DataBlock = ""
+	case parsedCmd[0] == "prepend" && cmd.DataBlock != "":
+		result := handlePrependData(*cmd, s.Store)
+		conn.Write([]byte(result))
+		cmd.Command = ""
+		cmd.DataBlock = ""
 	}
-
 }
 
 func handleSetData(data types.ServerCmd, store *types.Store) string {
@@ -164,16 +195,17 @@ func handleSetData(data types.ServerCmd, store *types.Store) string {
 	}
 
 	// handle if flags and byte are undefined
-	dataArgs := types.DataArgs{
-		Key:       cmdSlice[1],
-		DataBlock: strings.TrimSpace(data.DataBlock),
+	dataArgs := &types.DataArgs{
+		DataBlock: data.DataBlock,
 		Flags:     flags,
 		Exptime:   expirationTime,
 		ByteCt:    byteCt,
 		Noreply:   noreply,
 	}
 
-	store.Db.Enque(dataArgs)
+	key := cmdSlice[1]
+
+	(*store.Db)[key] = dataArgs
 
 	if noreply {
 		return ""
@@ -186,36 +218,109 @@ func handleGetData(cmdString []string, store *types.Store) string {
 	key := strings.TrimSpace(cmdString[1])
 	var result string
 
-	node := store.Db.Head()
+	if len((*store.Db)) == 0 {
+		return "END\r\n"
+	}
 
-	for node != nil {
-		if key != node.Value().Key {
-			result = "END\r\n"
-		} else if key == node.Value().Key {
-			exp := node.Value().Exptime
+	for k, v := range *store.Db {
+		if key == strings.TrimSpace(k) {
+			exp := v.Exptime
 
 			if exp == 0 {
-				result = fmt.Sprintf("VALUE %s %d %d\r\n", node.Value().DataBlock, node.Value().Flags, node.Value().ByteCt)
+				result = fmt.Sprintf("VALUE %s %d %d\n%s\r\n", k, v.Flags, v.ByteCt, v.DataBlock)
 				return result
 			} else if time.Now().Unix() > exp || exp < 0 {
+				delete(*store.Db, k)
 				result = "END\r\n"
-				store.Db.Delete(node)
 				return result
 			}
 
-			result = fmt.Sprintf("VALUE %s %d %d\r\n", node.Value().DataBlock, node.Value().Flags, node.Value().ByteCt)
+			result = fmt.Sprintf("VALUE %s %d %d\n%s\r\n", k, v.Flags, v.ByteCt, v.DataBlock)
+		} else if key == strings.TrimSpace(key) {
+			result = "END\r\n"
+		}
+	}
+	return result
+}
+
+func handleAddData(cmd types.ServerCmd, store *types.Store) string {
+	cmdSlice := strings.Split(cmd.Command, " ")
+	key := cmdSlice[1]
+
+	for k := range *store.Db {
+		if k == "" {
+			result := handleSetData(cmd, store)
+			return result
+		} else if key != k {
+			result := handleSetData(cmd, store)
+			return result
+		} else if string(key) == k {
+			return "NOT_STORED\r\n"
+		}
+	}
+
+	return ""
+}
+
+func handleReplaceData(cmd types.ServerCmd, store *types.Store) string {
+	cmdSlice := strings.Split(cmd.Command, " ")
+	key := cmdSlice[1]
+
+	for k := range *store.Db {
+		if k == "" {
+			result := handleSetData(cmd, store)
+			return result
+		} else if string(key) != k {
+			return "NOT_STORED\r\n"
+		} else if string(key) == k {
+			result := handleSetData(cmd, store)
 			return result
 		}
-		node = node.Next()
+	}
+
+	return ""
+}
+
+func handleAppendData(cmd types.ServerCmd, store *types.Store) string {
+	// add being able to add a space in the datablock string
+	key := strings.TrimSpace(strings.Split(cmd.Command, " ")[1])
+	var result string
+
+	if len(*store.Db) == 0 {
+		return "NOT_STORED\r\n"
+	}
+
+	for k, v := range *store.Db {
+		if k == strings.TrimSpace(key) {
+			(*store.Db)[key].DataBlock = strings.TrimSpace(v.DataBlock) + strings.TrimSpace(cmd.DataBlock)
+			result = "STORED\r\n"
+		} else if k != key {
+			result = "NOT_STORED\r\n"
+			return result
+		}
 	}
 
 	return result
 }
 
-func handleAddData(cmdString []string, store *types.Store) string {
-	return ""
-}
+func handlePrependData(cmd types.ServerCmd, store *types.Store) string {
+	// add being able to add a space in the datablock string
+	key := strings.TrimSpace(strings.Split(cmd.Command, " ")[1])
+	var result string
 
-func handleReplaceData(cmdString []string, store *types.Store) string {
-	return ""
+	if len(*store.Db) == 0 {
+		return "NOT_STORED\r\n"
+	}
+
+	for k, v := range *store.Db {
+		if k == strings.TrimSpace(key) {
+			(*store.Db)[key].DataBlock = strings.TrimSpace(cmd.DataBlock) + strings.TrimSpace(v.DataBlock)
+			result = "STORED\r\n"
+		} else if k != key {
+			result = "NOT_STORED\r\n"
+			return result
+		}
+	}
+
+	return result
 }

@@ -33,36 +33,31 @@ func (q *Queue[T]) Enque(item T) {
 	}
 }
 
-func (q *Queue[T]) Delete(node *Node[T]) *Node[T] {
-
+func (q *Queue[T]) Delete(node *Node[T]) *Queue[T] {
 	if node.prev == nil || node.next == nil {
-		deletedNode := node
 		node = nil
-		return deletedNode
 	} else {
 		prevNode := node.prev
 		nextNode := node.next
 
 		prevNode.next = node.next
 		nextNode.prev = node.prev
-		deletedNode := node
 
 		node.next = nil
 		node.prev = nil
 		node = nil
-
-		return deletedNode
 	}
 
+	return q
 }
 
 func (q *Queue[T]) Head() *Node[T] {
 	return q.head
 }
 
-// func (q *Queue[T]) Tail() *Node[T] {
-// return q.tail
-// }
+func (q *Queue[T]) Tail() *Node[T] {
+	return q.tail
+}
 
 func NewQueue[T any]() *Queue[T] {
 	return &Queue[T]{}
@@ -83,5 +78,5 @@ type DataArgs struct {
 }
 
 type Store struct {
-	Db *Queue[DataArgs]
+	Db *map[string]*DataArgs
 }
