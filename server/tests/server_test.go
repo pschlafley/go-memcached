@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pschlafley/coding-challenges/go-memcahce/types"
+	"github.com/pschlafley/coding-challenges/go-memcache/types"
 )
 
 var (
@@ -72,7 +72,7 @@ func TestDataParserReplace(t *testing.T) {
 	}
 }
 
-func deleteNodeFromQueue(value int) types.Queue[int] {
+func deleteNodeFromQueue() types.Queue[int] {
 	q := types.Queue[int]{}
 
 	q.Enque(1)
@@ -82,14 +82,7 @@ func deleteNodeFromQueue(value int) types.Queue[int] {
 	q.Enque(5)
 	q.Enque(6)
 
-	node := q.Head()
-
-	for node != nil {
-		if node.Value() == value {
-			q.Delete(node)
-		}
-		node = node.Next()
-	}
+	q.Deque()
 
 	return q
 }
@@ -98,14 +91,14 @@ func TestQueueDelete(t *testing.T) {
 	cMap := []int{}
 	tMap := []int{}
 
-	test_queue := deleteNodeFromQueue(4)
+	test_queue := deleteNodeFromQueue()
 
 	control_queue := types.Queue[int]{}
 	control_queue.Enque(1)
 	control_queue.Enque(2)
 	control_queue.Enque(3)
+	control_queue.Enque(4)
 	control_queue.Enque(5)
-	control_queue.Enque(6)
 
 	cnode := control_queue.Head()
 	tnode := test_queue.Head()

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/pschlafley/coding-challenges/go-memcahce/server"
+	"github.com/pschlafley/coding-challenges/go-memcache/server"
 )
 
 func main() {
@@ -24,6 +24,13 @@ func main() {
 	address := "127.0.0.1:" + portFlag
 
 	server := server.NewServer(address)
+
+	go func() {
+		for {
+			msg := <-server.MsgCh
+			fmt.Printf("%s", msg.Text)
+		}
+	}()
 
 	log.Fatal(server.Start())
 }

@@ -7,14 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pschlafley/coding-challenges/go-memcahce/types"
+	"github.com/pschlafley/coding-challenges/go-memcache/types"
 )
 
 type Server struct {
 	ListenAddr string
 	Listener   net.Listener
 	quit       chan struct{}
-	MsgCh      chan []byte
+	MsgCh      chan types.Message
 	peerMap    map[net.Addr]string
 	Store      *types.Store
 }
@@ -29,7 +29,7 @@ func NewServer(address string) *Server {
 	return &Server{
 		ListenAddr: address,
 		quit:       make(chan struct{}),
-		MsgCh:      make(chan []byte, 10),
+		MsgCh:      make(chan types.Message),
 		Store:      store,
 	}
 }
@@ -83,7 +83,7 @@ func (s *Server) ReadConnections(conn net.Conn) {
 		n, err := conn.Read(buf)
 
 		if err != nil {
-			fmt.Printf("connection closed: %s", conn.RemoteAddr())
+			fmt.Printf("connection closed: %s\n", conn.RemoteAddr())
 			return
 		}
 
@@ -124,12 +124,25 @@ func (s *Server) dataParser(conn net.Conn, cmd *types.ServerCmd, data []byte) {
 func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 	parsedCmd := strings.Split(cmd.Command, " ")
 
+	// for {
+	msgStruct := &types.Message{}
+
 	switch parsedCmd[0] != "" {
 	case parsedCmd[0] == "set" && cmd.DataBlock != "":
+		msgStruct.Cmd = types.ServerCmd{
+			Command:   cmd.Command,
+			DataBlock: cmd.DataBlock,
+		}
+		msgStruct.RemoteAddr = conn.RemoteAddr()
+		msgStruct.Text = fmt.Sprintf("connection %s: set data", msgStruct.RemoteAddr)
+
+		s.MsgCh <- *msgStruct
+
 		result := handleSetData(*cmd, s.Store)
 		conn.Write([]byte(result))
 		cmd.Command = ""
 		cmd.DataBlock = ""
+		break
 	case parsedCmd[0] == "get":
 		result := handleGetData(parsedCmd, s.Store)
 		conn.Write([]byte(result))
@@ -154,6 +167,7 @@ func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 		cmd.Command = ""
 		cmd.DataBlock = ""
 	}
+	// }
 }
 
 func handleSetData(data types.ServerCmd, store *types.Store) string {

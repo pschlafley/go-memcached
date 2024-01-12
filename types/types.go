@@ -1,5 +1,7 @@
 package types
 
+import "net"
+
 type Node[T any] struct {
 	value T
 	next  *Node[T]
@@ -33,20 +35,14 @@ func (q *Queue[T]) Enque(item T) {
 	}
 }
 
-func (q *Queue[T]) Delete(node *Node[T]) *Queue[T] {
-	if node.prev == nil || node.next == nil {
-		node = nil
-	} else {
-		prevNode := node.prev
-		nextNode := node.next
+func (q *Queue[T]) Deque() *Queue[T] {
+	node := q.head
 
-		prevNode.next = node.next
-		nextNode.prev = node.prev
+	q.head = node.next
 
-		node.next = nil
-		node.prev = nil
-		node = nil
-	}
+	node.next = nil
+	node.prev = nil
+	node = nil
 
 	return q
 }
@@ -79,4 +75,10 @@ type DataArgs struct {
 
 type Store struct {
 	Db *map[string]*DataArgs
+}
+
+type Message struct {
+	RemoteAddr net.Addr
+	Text       string
+	Cmd        ServerCmd
 }
