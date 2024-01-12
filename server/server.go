@@ -15,7 +15,7 @@ type Server struct {
 	Listener   net.Listener
 	quit       chan struct{}
 	MsgCh      chan types.Message
-	peerMap    map[net.Addr]string
+	PeerMap    map[net.Addr]string
 	Store      *types.Store
 }
 
@@ -30,6 +30,7 @@ func NewServer(address string) *Server {
 		ListenAddr: address,
 		quit:       make(chan struct{}),
 		MsgCh:      make(chan types.Message),
+		PeerMap:    make(map[net.Addr]string),
 		Store:      store,
 	}
 }
@@ -57,6 +58,8 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) AcceptConnections() {
+	var i int = 1
+
 	for {
 		conn, err := s.Listener.Accept()
 
@@ -67,6 +70,13 @@ func (s *Server) AcceptConnections() {
 
 		fmt.Println("New Connection: ", conn.RemoteAddr())
 
+		peerVal := fmt.Sprintf("conn%d", i)
+
+		s.PeerMap[conn.RemoteAddr()] = peerVal
+
+		i += 1
+
+		fmt.Println(s.PeerMap[conn.RemoteAddr()])
 		// Each time we accept a connection, we will spin up a new goroutine so that it is not blocking and handle each connection in it's own goroutine
 		go s.ReadConnections(conn)
 	}
@@ -84,6 +94,7 @@ func (s *Server) ReadConnections(conn net.Conn) {
 
 		if err != nil {
 			fmt.Printf("connection closed: %s\n", conn.RemoteAddr())
+			delete(s.PeerMap, conn.RemoteAddr())
 			return
 		}
 
@@ -124,7 +135,6 @@ func (s *Server) dataParser(conn net.Conn, cmd *types.ServerCmd, data []byte) {
 func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 	parsedCmd := strings.Split(cmd.Command, " ")
 
-	// for {
 	msgStruct := &types.Message{}
 
 	switch parsedCmd[0] != "" {
@@ -134,7 +144,8 @@ func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 			DataBlock: cmd.DataBlock,
 		}
 		msgStruct.RemoteAddr = conn.RemoteAddr()
-		msgStruct.Text = fmt.Sprintf("connection %s: set data", msgStruct.RemoteAddr)
+		msgStruct.Text = fmt.Sprintf("%s", msgStruct.Cmd.DataBlock)
+		msgStruct.TimeStamp = time.Now().Format(time.ANSIC)
 
 		s.MsgCh <- *msgStruct
 
@@ -167,7 +178,6 @@ func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 		cmd.Command = ""
 		cmd.DataBlock = ""
 	}
-	// }
 }
 
 func handleSetData(data types.ServerCmd, store *types.Store) string {

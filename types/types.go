@@ -1,6 +1,8 @@
 package types
 
-import "net"
+import (
+	"net"
+)
 
 type Node[T any] struct {
 	value T
@@ -81,4 +83,5 @@ type Message struct {
 	RemoteAddr net.Addr
 	Text       string
 	Cmd        ServerCmd
+	TimeStamp  string
 }
