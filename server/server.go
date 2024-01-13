@@ -23,7 +23,8 @@ func NewServer(address string) *Server {
 	dbMap := make(map[string]*types.DataArgs)
 
 	store := &types.Store{
-		Db: &dbMap,
+		Db:   &dbMap,
+		Size: 5,
 	}
 
 	return &Server{
@@ -76,7 +77,6 @@ func (s *Server) AcceptConnections() {
 
 		i += 1
 
-		fmt.Println(s.PeerMap[conn.RemoteAddr()])
 		// Each time we accept a connection, we will spin up a new goroutine so that it is not blocking and handle each connection in it's own goroutine
 		go s.ReadConnections(conn)
 	}
@@ -84,6 +84,7 @@ func (s *Server) AcceptConnections() {
 
 func (s *Server) ReadConnections(conn net.Conn) {
 	defer conn.Close()
+	fmt.Println(s.Store.Size)
 
 	buf := make([]byte, 2048)
 
@@ -108,7 +109,7 @@ func (s *Server) dataParser(conn net.Conn, cmd *types.ServerCmd, data []byte) {
 	dataSlice := strings.Split(string(data), " ")
 
 	switch dataSlice[0] != "" {
-	case dataSlice[0] != "set" && dataSlice[0] != "get" && dataSlice[0] != "add" && dataSlice[0] != "replace" && dataSlice[0] != "append" && dataSlice[0] != "prepend":
+	case dataSlice[0] != "set" && dataSlice[0] != "get" && dataSlice[0] != "add" && dataSlice[0] != "replace" && dataSlice[0] != "append" && dataSlice[0] != "prepend" && dataSlice[0] != "delete" && dataSlice[0] != "increment" && dataSlice[0] != "decrement":
 		cmd.DataBlock = string(data)
 	case dataSlice[0] == "set":
 		cmd.Command = string(data)
@@ -127,6 +128,14 @@ func (s *Server) dataParser(conn net.Conn, cmd *types.ServerCmd, data []byte) {
 	case dataSlice[0] == "prepend":
 		cmd.Command = string(data)
 		cmd.DataBlock = ""
+	case dataSlice[0] == "delete":
+		cmd.Command = string(data)
+	case dataSlice[0] == "increment":
+		cmd.Command = string(data)
+		cmd.DataBlock = ""
+	case dataSlice[0] == "decrement":
+		cmd.Command = string(data)
+		cmd.DataBlock = ""
 	}
 
 	s.commandParser(cmd, conn)
@@ -135,28 +144,59 @@ func (s *Server) dataParser(conn net.Conn, cmd *types.ServerCmd, data []byte) {
 func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 	parsedCmd := strings.Split(cmd.Command, " ")
 
-	msgStruct := &types.Message{}
+	setMsgStruct := &types.Message{}
+	getMsgStruct := &types.Message{}
 
 	switch parsedCmd[0] != "" {
 	case parsedCmd[0] == "set" && cmd.DataBlock != "":
-		msgStruct.Cmd = types.ServerCmd{
+		if len((*s.Store.Db)) > 5 {
+			setMsgStruct.Cmd = types.ServerCmd{}
+			setMsgStruct.RemoteAddr = conn.RemoteAddr()
+			setMsgStruct.Text = "Store is at it's maximum capacity!"
+			s.MsgCh <- *setMsgStruct
+			return
+		}
+
+		setMsgStruct.Cmd = types.ServerCmd{
 			Command:   cmd.Command,
 			DataBlock: cmd.DataBlock,
 		}
-		msgStruct.RemoteAddr = conn.RemoteAddr()
-		msgStruct.Text = fmt.Sprintf("%s", msgStruct.Cmd.DataBlock)
-		msgStruct.TimeStamp = time.Now().Format(time.ANSIC)
+		setMsgStruct.RemoteAddr = conn.RemoteAddr()
 
-		s.MsgCh <- *msgStruct
+		cmdSlice := strings.Split(setMsgStruct.Cmd.Command, " ")
+
+		setMsgStruct.Text = fmt.Sprintf("%s %s", cmdSlice[0], setMsgStruct.Cmd.DataBlock)
+		setMsgStruct.TimeStamp = time.Now().Format(time.ANSIC)
+
+		s.MsgCh <- *setMsgStruct
 
 		result := handleSetData(*cmd, s.Store)
 		conn.Write([]byte(result))
 		cmd.Command = ""
 		cmd.DataBlock = ""
-		break
+
 	case parsedCmd[0] == "get":
 		result := handleGetData(parsedCmd, s.Store)
+
+		if result != "END\r\n" {
+			getMsgStruct.Cmd = types.ServerCmd{
+				Command:   cmd.Command,
+				DataBlock: cmd.DataBlock,
+			}
+
+			getMsgStruct.RemoteAddr = conn.RemoteAddr()
+
+			cmdSlice := strings.Split(getMsgStruct.Cmd.Command, " ")
+			resultSlice := strings.Split(strings.TrimSpace(result), "\n")
+
+			getMsgStruct.Text = fmt.Sprintf("%s %s", cmdSlice[0], resultSlice[1])
+			getMsgStruct.TimeStamp = time.Now().Format(time.ANSIC)
+
+			s.MsgCh <- *getMsgStruct
+		}
+
 		conn.Write([]byte(result))
+
 	case parsedCmd[0] == "add" && cmd.DataBlock != "":
 		result := handleAddData(*cmd, s.Store)
 		conn.Write([]byte(result))
@@ -177,12 +217,34 @@ func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 		conn.Write([]byte(result))
 		cmd.Command = ""
 		cmd.DataBlock = ""
+	case parsedCmd[0] == "delete":
+		result := handleDeleteData(*cmd, s.Store)
+		conn.Write([]byte(result))
+		cmd.Command = ""
+		cmd.DataBlock = ""
+	case parsedCmd[0] == "increment" && cmd.DataBlock != "":
+		result := handleIncrementStoreSize(*cmd, s.Store)
+		conn.Write([]byte(result))
+		cmd.Command = ""
+		cmd.DataBlock = ""
+	case parsedCmd[0] == "decrement" && cmd.DataBlock != "":
+		result := handleDecrementStoreSize(*cmd, s.Store)
+		conn.Write([]byte(result))
+		cmd.Command = ""
+		cmd.DataBlock = ""
 	}
 }
 
 func handleSetData(data types.ServerCmd, store *types.Store) string {
 	cmdSlice := strings.Split(data.Command, " ")
 	flags, fErr := strconv.Atoi(strings.TrimSpace(cmdSlice[2]))
+	key := cmdSlice[1]
+
+	for k := range *store.Db {
+		if k == key {
+			return "END\r\n"
+		}
+	}
 
 	if fErr != nil {
 		return "Error: Flags field is missing or not a valid number, please try again\r\n"
@@ -227,8 +289,6 @@ func handleSetData(data types.ServerCmd, store *types.Store) string {
 		Noreply:   noreply,
 	}
 
-	key := cmdSlice[1]
-
 	(*store.Db)[key] = dataArgs
 
 	if noreply {
@@ -244,26 +304,27 @@ func handleGetData(cmdString []string, store *types.Store) string {
 
 	if len((*store.Db)) == 0 {
 		return "END\r\n"
-	}
+	} else if len((*store.Db)) > 0 {
+		for k, v := range *store.Db {
+			if key == strings.TrimSpace(k) {
+				exp := v.Exptime
 
-	for k, v := range *store.Db {
-		if key == strings.TrimSpace(k) {
-			exp := v.Exptime
+				if exp == 0 {
+					result = fmt.Sprintf("VALUE %s %d %d\n%s\n", k, v.Flags, v.ByteCt, strings.TrimSpace(v.DataBlock))
+					return result
+				} else if time.Now().Unix() > exp || exp < 0 {
+					delete(*store.Db, k)
+					result = "END\r\n"
+					return result
+				}
 
-			if exp == 0 {
-				result = fmt.Sprintf("VALUE %s %d %d\n%s\r\n", k, v.Flags, v.ByteCt, v.DataBlock)
-				return result
-			} else if time.Now().Unix() > exp || exp < 0 {
-				delete(*store.Db, k)
+				result = fmt.Sprintf("VALUE %s %d %d\n%s\n", k, v.Flags, v.ByteCt, strings.TrimSpace(v.DataBlock))
+			} else if key == strings.TrimSpace(key) {
 				result = "END\r\n"
-				return result
 			}
-
-			result = fmt.Sprintf("VALUE %s %d %d\n%s\r\n", k, v.Flags, v.ByteCt, v.DataBlock)
-		} else if key == strings.TrimSpace(key) {
-			result = "END\r\n"
 		}
 	}
+
 	return result
 }
 
@@ -347,4 +408,50 @@ func handlePrependData(cmd types.ServerCmd, store *types.Store) string {
 	}
 
 	return result
+}
+
+func handleDeleteData(cmd types.ServerCmd, store *types.Store) string {
+	cmdSlice := strings.Split(cmd.Command, " ")
+	result := ""
+	keyToDelete := cmdSlice[1]
+
+	if len((*store.Db)) == 0 {
+		return "END\r\n"
+	}
+
+	for k := range *store.Db {
+		if strings.TrimSpace(keyToDelete) == k {
+			delete(*store.Db, k)
+			result = "DELETED\r\n"
+			return result
+		} else if keyToDelete != k {
+			result = "END\r\n"
+		}
+	}
+
+	return result
+}
+
+func handleIncrementStoreSize(cmd types.ServerCmd, store *types.Store) string {
+	incrementValue, err := strconv.Atoi(cmd.DataBlock)
+
+	if err != nil {
+		return fmt.Sprintf("Error: %s\n", err)
+	}
+
+	store.Size += incrementValue
+
+	return "INCREMENT\r\n"
+}
+
+func handleDecrementStoreSize(cmd types.ServerCmd, store *types.Store) string {
+	decrementValue, err := strconv.Atoi(cmd.DataBlock)
+
+	if err != nil {
+		return fmt.Sprintf("Error: %s\n", err)
+	}
+
+	store.Size += decrementValue
+
+	return "DECREMENT\r\n"
 }

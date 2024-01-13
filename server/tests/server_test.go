@@ -7,18 +7,58 @@ import (
 	"github.com/pschlafley/coding-challenges/go-memcache/types"
 )
 
+/* type DataArgs struct {
+	Key       string
+	DataBlock string
+	Flags     int
+	Exptime   int64
+	ByteCt    int
+	Noreply   bool
+}*/
+
 var (
 	setData     = "set test 0 30 4"
 	getData     = "get test"
 	addData     = "add test 0 30 4"
 	replaceData = "replace test 0 30 4"
+	deleteData  = "delete test 0 0 5"
+	dataArgsMap = map[string]types.DataArgs{
+		"casey": {
+			Key:       "casey",
+			DataBlock: "VALUE 0 5 casey",
+			Exptime:   0,
+			ByteCt:    5,
+			Noreply:   false,
+		},
+		"peyton": {
+			Key:       "peyton",
+			DataBlock: "VALUE 0 6 peyton",
+			Exptime:   0,
+			ByteCt:    6,
+			Noreply:   false,
+		},
+		"andre": {
+			Key:       "andre",
+			DataBlock: "VALUE 0 5 andre",
+			Exptime:   0,
+			ByteCt:    5,
+			Noreply:   false,
+		},
+		"jerika": {
+			Key:       "jerika",
+			DataBlock: "VALUE 0 6 andre",
+			Exptime:   0,
+			ByteCt:    6,
+			Noreply:   false,
+		},
+	}
 )
 
 func dataParser(cmd *types.ServerCmd, data []byte) *types.ServerCmd {
 	dataSlice := strings.Split(string(data), " ")
 
 	switch dataSlice[0] != "" {
-	case dataSlice[0] != "set" && dataSlice[0] != "get" && dataSlice[0] != "add" && dataSlice[0] != "replace":
+	case dataSlice[0] != "set" && dataSlice[0] != "get" && dataSlice[0] != "add" && dataSlice[0] != "replace" && dataSlice[0] != "delete":
 		cmd.DataBlock = string(data)
 	case dataSlice[0] == "set":
 		cmd.Command = string(data)
@@ -28,6 +68,8 @@ func dataParser(cmd *types.ServerCmd, data []byte) *types.ServerCmd {
 	case dataSlice[0] == "add":
 		cmd.Command = string(data)
 	case dataSlice[0] == "replace":
+		cmd.Command = string(data)
+	case dataSlice[0] == "delete":
 		cmd.Command = string(data)
 	}
 
@@ -70,6 +112,46 @@ func TestDataParserReplace(t *testing.T) {
 	if s.Command != replaceData {
 		t.Fatalf("expected= %s, got= %s", replaceData, s.Command)
 	}
+}
+
+func TestDataParserDelete(t *testing.T) {
+	cmd := &types.ServerCmd{}
+
+	s := dataParser(cmd, []byte(deleteData))
+
+	if s.Command != deleteData {
+		t.Fatalf("expected= %s, got= %s", deleteData, s.Command)
+	}
+}
+
+func deleteKey(keyToDelete string, m map[string]types.DataArgs) string {
+	result := ""
+
+	for k := range m {
+		if keyToDelete == k {
+			delete(m, keyToDelete)
+			result = keyToDelete
+		}
+	}
+	return result
+}
+
+func TestDeleteFromMap(t *testing.T) {
+	deletedKey := deleteKey("peyton", dataArgsMap)
+
+	switch deletedKey != "" {
+	case deletedKey == "casey":
+		t.Logf("Success! Expected: %s, Got: %s", "casey", deletedKey)
+	case deletedKey == "peyton":
+		t.Logf("Success! Expected: %s, Got: %s", "peyton", deletedKey)
+	case deletedKey == "andre":
+		t.Logf("Success! Expected: %s, Got: %s", "andre", deletedKey)
+	case deletedKey == "jerika":
+		t.Logf("Success! Expected: %s, Got: %s", "jerika", deletedKey)
+	default:
+		t.Fatal("Test Failed, did not receive a deleted key")
+	}
+
 }
 
 func deleteNodeFromQueue() types.Queue[int] {

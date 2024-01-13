@@ -76,7 +76,8 @@ type DataArgs struct {
 }
 
 type Store struct {
-	Db *map[string]*DataArgs
+	Db   *map[string]*DataArgs
+	Size int
 }
 
 type Message struct {

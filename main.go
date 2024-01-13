@@ -26,9 +26,8 @@ func main() {
 
 	server := server.NewServer(address)
 
-	messageQueue := types.NewQueue[types.Message]()
-
 	go func() {
+		messageQueue := types.NewQueue[types.Message]()
 		for {
 			msg := <-server.MsgCh
 			messageQueue.Enque(msg)
@@ -36,10 +35,11 @@ func main() {
 			node := messageQueue.Head()
 
 			for node != nil {
-				fmt.Printf("%v %s: %s", node.Value().TimeStamp, node.Value().RemoteAddr, node.Value().Text)
+				fmt.Printf("%v %s: %s\n", node.Value().TimeStamp, node.Value().RemoteAddr, node.Value().Text)
 				node = node.Next()
 			}
 		}
+
 	}()
 
 	log.Fatal(server.Start())
