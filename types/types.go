@@ -30,10 +30,10 @@ func (q *Queue[T]) Enque(item T) {
 		q.head = newNode
 		q.tail = newNode
 	} else {
-		oldNode := q.head
-		oldNode.prev = newNode
-		newNode.next = oldNode
-		q.head = newNode
+		oldNode := q.tail
+		oldNode.next = newNode
+		newNode.prev = oldNode
+		q.tail = newNode
 	}
 }
 
@@ -81,8 +81,10 @@ type Store struct {
 }
 
 type Message struct {
-	RemoteAddr net.Addr
-	Text       string
-	Cmd        ServerCmd
-	TimeStamp  string
+	RemoteAddr   net.Addr
+	Text         string
+	Cmd          ServerCmd
+	TimeStamp    string
+	DeletionTime int64
+	Increment    int64
 }

@@ -6,7 +6,6 @@ import (
 	"log"
 
 	"github.com/pschlafley/coding-challenges/go-memcache/server"
-	"github.com/pschlafley/coding-challenges/go-memcache/types"
 )
 
 func main() {
@@ -26,21 +25,7 @@ func main() {
 
 	server := server.NewServer(address)
 
-	go func() {
-		messageQueue := types.NewQueue[types.Message]()
-		for {
-			msg := <-server.MsgCh
-			messageQueue.Enque(msg)
-
-			node := messageQueue.Head()
-
-			for node != nil {
-				fmt.Printf("%v %s: %s\n", node.Value().TimeStamp, node.Value().RemoteAddr, node.Value().Text)
-				node = node.Next()
-			}
-		}
-
-	}()
+	server.HandleServerMessageQueue()
 
 	log.Fatal(server.Start())
 }

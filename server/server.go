@@ -20,11 +20,11 @@ type Server struct {
 }
 
 func NewServer(address string) *Server {
-	dbMap := make(map[string]*types.DataArgs)
+	dbMap := make(map[string]*types.DataArgs, 1)
 
 	store := &types.Store{
 		Db:   &dbMap,
-		Size: 5,
+		Size: 1000,
 	}
 
 	return &Server{
@@ -34,6 +34,31 @@ func NewServer(address string) *Server {
 		PeerMap:    make(map[net.Addr]string),
 		Store:      store,
 	}
+}
+
+func (s *Server) HandleServerMessageQueue() {
+	go func() {
+		messageQueue := types.NewQueue[types.Message]()
+		for {
+			msg := <-s.MsgCh
+
+			messageQueue.Enque(msg)
+
+			node := messageQueue.Head()
+
+			fmt.Println("---------------------------")
+
+			for node != nil {
+				if time.Now().Unix() > messageQueue.Head().Value().DeletionTime {
+					fmt.Println("Deleted Head")
+					messageQueue.Deque()
+				}
+				fmt.Printf("%v %s: %s\r", node.Value().TimeStamp, node.Value().RemoteAddr, node.Value().Text)
+				node = node.Next()
+			}
+		}
+
+	}()
 }
 
 func (s *Server) Start() error {
@@ -84,7 +109,6 @@ func (s *Server) AcceptConnections() {
 
 func (s *Server) ReadConnections(conn net.Conn) {
 	defer conn.Close()
-	fmt.Println(s.Store.Size)
 
 	buf := make([]byte, 2048)
 
@@ -144,41 +168,53 @@ func (s *Server) dataParser(conn net.Conn, cmd *types.ServerCmd, data []byte) {
 func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 	parsedCmd := strings.Split(cmd.Command, " ")
 
-	setMsgStruct := &types.Message{}
-	getMsgStruct := &types.Message{}
+	setMsgStruct := types.Message{}
+	getMsgStruct := types.Message{}
+	addMsgStruct := types.Message{}
 
 	switch parsedCmd[0] != "" {
 	case parsedCmd[0] == "set" && cmd.DataBlock != "":
-		if len((*s.Store.Db)) > 5 {
+		if len((*s.Store.Db)) > s.Store.Size {
 			setMsgStruct.Cmd = types.ServerCmd{}
 			setMsgStruct.RemoteAddr = conn.RemoteAddr()
-			setMsgStruct.Text = "Store is at it's maximum capacity!"
-			s.MsgCh <- *setMsgStruct
-			return
+			setMsgStruct.Text = "Store is at it's maximum capacity!\n"
+			setMsgStruct.DeletionTime = time.Now().Unix() + int64(10)
+
+			s.MsgCh <- setMsgStruct
+			conn.Write([]byte(setMsgStruct.Text))
+
+			var i int = 0
+			for i < 1 {
+				for k := range *s.Store.Db {
+					delete(*s.Store.Db, k)
+					i++
+				}
+			}
+		} else {
+			setMsgStruct.Cmd = types.ServerCmd{
+				Command:   cmd.Command,
+				DataBlock: cmd.DataBlock,
+			}
+			setMsgStruct.RemoteAddr = conn.RemoteAddr()
+
+			cmdSlice := strings.Split(setMsgStruct.Cmd.Command, " ")
+
+			setMsgStruct.Text = fmt.Sprintf("%s %s\n", cmdSlice[0], setMsgStruct.Cmd.DataBlock)
+			setMsgStruct.TimeStamp = time.Now().Format(time.ANSIC)
+			setMsgStruct.DeletionTime = time.Now().Unix() + int64(10)
+
+			s.MsgCh <- setMsgStruct
+
+			result := handleSetData(*cmd, s.Store)
+			conn.Write([]byte(result))
+			cmd.Command = ""
+			cmd.DataBlock = ""
 		}
-
-		setMsgStruct.Cmd = types.ServerCmd{
-			Command:   cmd.Command,
-			DataBlock: cmd.DataBlock,
-		}
-		setMsgStruct.RemoteAddr = conn.RemoteAddr()
-
-		cmdSlice := strings.Split(setMsgStruct.Cmd.Command, " ")
-
-		setMsgStruct.Text = fmt.Sprintf("%s %s", cmdSlice[0], setMsgStruct.Cmd.DataBlock)
-		setMsgStruct.TimeStamp = time.Now().Format(time.ANSIC)
-
-		s.MsgCh <- *setMsgStruct
-
-		result := handleSetData(*cmd, s.Store)
-		conn.Write([]byte(result))
-		cmd.Command = ""
-		cmd.DataBlock = ""
 
 	case parsedCmd[0] == "get":
 		result := handleGetData(parsedCmd, s.Store)
 
-		if result != "END\r\n" {
+		if strings.TrimSpace(result) != "END" {
 			getMsgStruct.Cmd = types.ServerCmd{
 				Command:   cmd.Command,
 				DataBlock: cmd.DataBlock,
@@ -189,19 +225,72 @@ func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 			cmdSlice := strings.Split(getMsgStruct.Cmd.Command, " ")
 			resultSlice := strings.Split(strings.TrimSpace(result), "\n")
 
-			getMsgStruct.Text = fmt.Sprintf("%s %s", cmdSlice[0], resultSlice[1])
+			getMsgStruct.Text = fmt.Sprintf("%s %s\r", cmdSlice[0], resultSlice[1])
 			getMsgStruct.TimeStamp = time.Now().Format(time.ANSIC)
+			getMsgStruct.DeletionTime = time.Now().Unix() + int64(10)
 
-			s.MsgCh <- *getMsgStruct
+			s.MsgCh <- getMsgStruct
+		} else {
+			getMsgStruct.Cmd = types.ServerCmd{
+				Command:   cmd.Command,
+				DataBlock: cmd.DataBlock,
+			}
+
+			getMsgStruct.RemoteAddr = conn.RemoteAddr()
+
+			cmdSlice := strings.Split(getMsgStruct.Cmd.Command, " ")
+
+			getMsgStruct.Text = fmt.Sprintf("%s: Failed!\n", cmdSlice[0])
+			getMsgStruct.TimeStamp = time.Now().Format(time.ANSIC)
+			getMsgStruct.DeletionTime = time.Now().Unix() + int64(10)
+
+			s.MsgCh <- getMsgStruct
+
 		}
 
 		conn.Write([]byte(result))
 
 	case parsedCmd[0] == "add" && cmd.DataBlock != "":
-		result := handleAddData(*cmd, s.Store)
-		conn.Write([]byte(result))
-		cmd.Command = ""
-		cmd.DataBlock = ""
+		if len((*s.Store.Db)) > s.Store.Size {
+			addMsgStruct.Cmd = types.ServerCmd{}
+			addMsgStruct.RemoteAddr = conn.RemoteAddr()
+			addMsgStruct.Text = "Store is at it's maximum capacity!"
+			s.MsgCh <- addMsgStruct
+			conn.Write([]byte(addMsgStruct.Text))
+
+			var i int = 0
+			for i < 1 {
+				for k := range *s.Store.Db {
+					delete(*s.Store.Db, k)
+					i++
+				}
+			}
+		} else {
+			addMsgStruct.Cmd = types.ServerCmd{
+				Command:   cmd.Command,
+				DataBlock: cmd.DataBlock,
+			}
+			addMsgStruct.RemoteAddr = conn.RemoteAddr()
+
+			cmdSlice := strings.Split(addMsgStruct.Cmd.Command, " ")
+
+			addMsgStruct.TimeStamp = time.Now().Format(time.ANSIC)
+
+			addMsgStruct.Text = fmt.Sprintf("%s %s\n", cmdSlice[0], setMsgStruct.Cmd.DataBlock)
+
+			result := handleSetData(*cmd, s.Store)
+
+			if strings.TrimSpace(result) == "END" {
+				addMsgStruct.Text = fmt.Sprintf("%s %s: Failed! The key %s already exists!\n", cmdSlice[0], addMsgStruct.Cmd.DataBlock, cmdSlice[0])
+			}
+
+			s.MsgCh <- addMsgStruct
+
+			conn.Write([]byte(result))
+			cmd.Command = ""
+			cmd.DataBlock = ""
+		}
+
 	case parsedCmd[0] == "replace" && cmd.DataBlock != "":
 		result := handleReplaceData(*cmd, s.Store)
 		conn.Write([]byte(result))
