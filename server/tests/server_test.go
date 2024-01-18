@@ -202,3 +202,16 @@ func TestQueueDelete(t *testing.T) {
 
 	}
 }
+
+// func TestOpenLogFile(t *testing.T) {
+// 	file, err := os.Open("../logs/server.txt")
+
+// 	defer file.Close()
+
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	} else {
+// 		t.Log(file.Stat())
+// 	}
+
+// }

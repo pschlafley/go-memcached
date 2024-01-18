@@ -2,12 +2,15 @@ package server
 
 import (
 	"fmt"
+	"log"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pschlafley/coding-challenges/go-memcache/types"
+	"github.com/pschlafley/fileFunctions"
 )
 
 type Server struct {
@@ -36,27 +39,58 @@ func NewServer(address string) *Server {
 	}
 }
 
+func openLogFile(fileName, path string) (*os.File, error) {
+	fileWasFound, fN, path, errors := fileFunctions.FindFile(fileName, path)
+
+	if len(errors) > 0 {
+		return nil, fmt.Errorf("errors: %v", errors)
+	}
+
+	if !fileWasFound {
+		return nil, fmt.Errorf("file was found: %v", fileWasFound)
+	}
+
+	file, err := os.OpenFile(fN, os.O_RDWR|os.O_CREATE, 0755)
+
+	if err != nil {
+		return nil, fmt.Errorf("error opening file: %s Error: %s", path, err)
+	}
+
+	return file, nil
+}
+
 func (s *Server) HandleServerMessageQueue() {
 	go func() {
-		messageQueue := types.NewQueue[types.Message]()
-		for {
-			msg := <-s.MsgCh
+		file, err := openLogFile("server.log", "/")
 
-			messageQueue.Enque(msg)
+		defer file.Close()
 
-			node := messageQueue.Head()
-
-			fmt.Println("---------------------------")
-
-			for node != nil {
-				if time.Now().Unix() > messageQueue.Head().Value().DeletionTime {
-					fmt.Println("Deleted Head")
-					messageQueue.Deque()
-				}
-				fmt.Printf("%v %s: %s\r", node.Value().TimeStamp, node.Value().RemoteAddr, node.Value().Text)
-				node = node.Next()
-			}
+		if err != nil {
+			log.Fatal(err)
 		}
+
+		fmt.Println(file.Stat())
+
+		// messageQueue := types.NewQueue[*types.Message]()
+
+		// for {
+		// 	msg := <-s.MsgCh
+
+		// 	messageQueue.Enque(&msg)
+
+		// 	node := messageQueue.Head()
+
+		// 	fmt.Println("---------------------------")
+
+		// 	for node != nil {
+		// 		if time.Now().Unix() > messageQueue.Head().Value().DeletionTime {
+		// 			fmt.Println("Deleted Head")
+		// 			messageQueue.Deque()
+		// 		}
+		// 		fmt.Printf("\r%v %s: %s\r", node.Value().TimeStamp, node.Value().RemoteAddr, node.Value().Text)
+		// 		node = node.Next()
+		// 	}
+		// }
 
 	}()
 }
@@ -168,20 +202,20 @@ func (s *Server) dataParser(conn net.Conn, cmd *types.ServerCmd, data []byte) {
 func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 	parsedCmd := strings.Split(cmd.Command, " ")
 
-	setMsgStruct := types.Message{}
-	getMsgStruct := types.Message{}
-	addMsgStruct := types.Message{}
+	msgStruct := &types.Message{}
 
 	switch parsedCmd[0] != "" {
 	case parsedCmd[0] == "set" && cmd.DataBlock != "":
 		if len((*s.Store.Db)) > s.Store.Size {
-			setMsgStruct.Cmd = types.ServerCmd{}
-			setMsgStruct.RemoteAddr = conn.RemoteAddr()
-			setMsgStruct.Text = "Store is at it's maximum capacity!\n"
-			setMsgStruct.DeletionTime = time.Now().Unix() + int64(10)
+			msgStruct.Cmd = types.ServerCmd{}
+			msgStruct.RemoteAddr = conn.RemoteAddr()
+			msgStruct.Text = "Store is at it's maximum capacity!\n"
+			msgStruct.DeletionTime = time.Now().Unix() + int64(60)
 
-			s.MsgCh <- setMsgStruct
-			conn.Write([]byte(setMsgStruct.Text))
+			s.MsgCh <- *msgStruct
+			conn.Write([]byte(msgStruct.Text))
+			msgStruct.Cmd.Command = ""
+			msgStruct.Cmd.DataBlock = ""
 
 			var i int = 0
 			for i < 1 {
@@ -191,19 +225,21 @@ func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 				}
 			}
 		} else {
-			setMsgStruct.Cmd = types.ServerCmd{
+			msgStruct.Cmd = types.ServerCmd{
 				Command:   cmd.Command,
 				DataBlock: cmd.DataBlock,
 			}
-			setMsgStruct.RemoteAddr = conn.RemoteAddr()
+			msgStruct.RemoteAddr = conn.RemoteAddr()
 
-			cmdSlice := strings.Split(setMsgStruct.Cmd.Command, " ")
+			cmdSlice := strings.Split(msgStruct.Cmd.Command, " ")
 
-			setMsgStruct.Text = fmt.Sprintf("%s %s\n", cmdSlice[0], setMsgStruct.Cmd.DataBlock)
-			setMsgStruct.TimeStamp = time.Now().Format(time.ANSIC)
-			setMsgStruct.DeletionTime = time.Now().Unix() + int64(10)
+			msgStruct.Text = fmt.Sprintf("%s %s\n", cmdSlice[0], msgStruct.Cmd.DataBlock)
+			msgStruct.TimeStamp = time.Now().Format(time.ANSIC)
+			msgStruct.DeletionTime = time.Now().Unix() + int64(60)
 
-			s.MsgCh <- setMsgStruct
+			s.MsgCh <- *msgStruct
+			msgStruct.Cmd.Command = ""
+			msgStruct.Cmd.DataBlock = ""
 
 			result := handleSetData(*cmd, s.Store)
 			conn.Write([]byte(result))
@@ -213,50 +249,57 @@ func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 
 	case parsedCmd[0] == "get":
 		result := handleGetData(parsedCmd, s.Store)
+		fmt.Println("Increment: ", msgStruct.Increment)
 
 		if strings.TrimSpace(result) != "END" {
-			getMsgStruct.Cmd = types.ServerCmd{
+			msgStruct.Cmd = types.ServerCmd{
 				Command:   cmd.Command,
 				DataBlock: cmd.DataBlock,
 			}
 
-			getMsgStruct.RemoteAddr = conn.RemoteAddr()
+			msgStruct.RemoteAddr = conn.RemoteAddr()
 
-			cmdSlice := strings.Split(getMsgStruct.Cmd.Command, " ")
+			cmdSlice := strings.Split(msgStruct.Cmd.Command, " ")
 			resultSlice := strings.Split(strings.TrimSpace(result), "\n")
 
-			getMsgStruct.Text = fmt.Sprintf("%s %s\r", cmdSlice[0], resultSlice[1])
-			getMsgStruct.TimeStamp = time.Now().Format(time.ANSIC)
-			getMsgStruct.DeletionTime = time.Now().Unix() + int64(10)
+			msgStruct.Text = fmt.Sprintf("%s %s\r", cmdSlice[0], resultSlice[1])
+			msgStruct.TimeStamp = time.Now().Format(time.ANSIC)
+			msgStruct.DeletionTime = time.Now().Unix() + int64(60)
 
-			s.MsgCh <- getMsgStruct
+			s.MsgCh <- *msgStruct
+			msgStruct.Cmd.Command = ""
+			msgStruct.Cmd.DataBlock = ""
+
 		} else {
-			getMsgStruct.Cmd = types.ServerCmd{
+			msgStruct.Cmd = types.ServerCmd{
 				Command:   cmd.Command,
 				DataBlock: cmd.DataBlock,
 			}
 
-			getMsgStruct.RemoteAddr = conn.RemoteAddr()
+			msgStruct.RemoteAddr = conn.RemoteAddr()
 
-			cmdSlice := strings.Split(getMsgStruct.Cmd.Command, " ")
+			cmdSlice := strings.Split(msgStruct.Cmd.Command, " ")
 
-			getMsgStruct.Text = fmt.Sprintf("%s: Failed!\n", cmdSlice[0])
-			getMsgStruct.TimeStamp = time.Now().Format(time.ANSIC)
-			getMsgStruct.DeletionTime = time.Now().Unix() + int64(10)
+			msgStruct.Text = fmt.Sprintf("%s: Failed!\n", cmdSlice[0])
+			msgStruct.TimeStamp = time.Now().Format(time.ANSIC)
+			msgStruct.DeletionTime = time.Now().Unix() + int64(60)
 
-			s.MsgCh <- getMsgStruct
-
+			s.MsgCh <- *msgStruct
+			msgStruct.Cmd.Command = ""
+			msgStruct.Cmd.DataBlock = ""
 		}
 
 		conn.Write([]byte(result))
 
 	case parsedCmd[0] == "add" && cmd.DataBlock != "":
 		if len((*s.Store.Db)) > s.Store.Size {
-			addMsgStruct.Cmd = types.ServerCmd{}
-			addMsgStruct.RemoteAddr = conn.RemoteAddr()
-			addMsgStruct.Text = "Store is at it's maximum capacity!"
-			s.MsgCh <- addMsgStruct
-			conn.Write([]byte(addMsgStruct.Text))
+			msgStruct.Cmd = types.ServerCmd{}
+			msgStruct.RemoteAddr = conn.RemoteAddr()
+			msgStruct.Text = "Store is at it's maximum capacity!"
+			msgStruct.DeletionTime = time.Now().Unix() + int64(60)
+
+			s.MsgCh <- *msgStruct
+			conn.Write([]byte(msgStruct.Text))
 
 			var i int = 0
 			for i < 1 {
@@ -266,27 +309,27 @@ func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 				}
 			}
 		} else {
-			addMsgStruct.Cmd = types.ServerCmd{
+			msgStruct.Cmd = types.ServerCmd{
 				Command:   cmd.Command,
 				DataBlock: cmd.DataBlock,
 			}
-			addMsgStruct.RemoteAddr = conn.RemoteAddr()
-
-			cmdSlice := strings.Split(addMsgStruct.Cmd.Command, " ")
-
-			addMsgStruct.TimeStamp = time.Now().Format(time.ANSIC)
-
-			addMsgStruct.Text = fmt.Sprintf("%s %s\n", cmdSlice[0], setMsgStruct.Cmd.DataBlock)
+			msgStruct.RemoteAddr = conn.RemoteAddr()
+			msgStructCmdSlice := strings.Split(msgStruct.Cmd.Command, " ")
+			msgStruct.TimeStamp = time.Now().Format(time.ANSIC)
+			msgStruct.Text = fmt.Sprintf("%s %s\n", msgStructCmdSlice[0], msgStruct.Cmd.DataBlock)
+			msgStruct.DeletionTime = time.Now().Unix() + int64(60)
 
 			result := handleSetData(*cmd, s.Store)
 
 			if strings.TrimSpace(result) == "END" {
-				addMsgStruct.Text = fmt.Sprintf("%s %s: Failed! The key %s already exists!\n", cmdSlice[0], addMsgStruct.Cmd.DataBlock, cmdSlice[0])
+				msgStruct.Text = fmt.Sprintf("%s %s: Failed! The key %s already exists!\n", msgStructCmdSlice[0], msgStruct.Cmd.DataBlock, msgStructCmdSlice[0])
 			}
 
-			s.MsgCh <- addMsgStruct
+			s.MsgCh <- *msgStruct
 
 			conn.Write([]byte(result))
+			msgStruct.Cmd.Command = ""
+			msgStruct.Cmd.DataBlock = ""
 			cmd.Command = ""
 			cmd.DataBlock = ""
 		}
