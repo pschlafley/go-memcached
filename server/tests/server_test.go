@@ -1,6 +1,8 @@
 package server
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -176,11 +178,11 @@ func TestQueueDelete(t *testing.T) {
 	test_queue := deleteNodeFromQueue()
 
 	control_queue := types.Queue[int]{}
-	control_queue.Enque(1)
 	control_queue.Enque(2)
 	control_queue.Enque(3)
 	control_queue.Enque(4)
 	control_queue.Enque(5)
+	control_queue.Enque(6)
 
 	cnode := control_queue.Head()
 	tnode := test_queue.Head()
@@ -203,15 +205,35 @@ func TestQueueDelete(t *testing.T) {
 	}
 }
 
-// func TestOpenLogFile(t *testing.T) {
-// 	file, err := os.Open("../logs/server.txt")
+func OpenLogFile(fileName, path string) (*os.File, error) {
+	// fileWasFound, fN, path, errors := fileFunctions.FindFile(fileName, path)
 
-// 	defer file.Close()
+	// if len(errors) > 0 {
+	// 	return nil, fmt.Errorf("errors: %v", errors)
+	// }
 
-// 	if err != nil {
-// 		t.Fatal(err)
-// 	} else {
-// 		t.Log(file.Stat())
-// 	}
+	// if !fileWasFound {
+	// 	return nil, fmt.Errorf("file was found: %v", fileWasFound)
+	// }
 
-// }
+	file, err := os.OpenFile("server.log", os.O_RDWR|os.O_CREATE, 0755)
+
+	if err != nil {
+		return nil, fmt.Errorf("error opening file: %s Error: %s", path, err)
+	}
+
+	return file, nil
+}
+
+func TestOpenLogFile(t *testing.T) {
+	file, err := OpenLogFile("server.log", "../../logs")
+
+	defer file.Close()
+
+	if err != nil {
+		t.Fatal(err)
+	} else {
+		t.Log(file.Stat())
+	}
+
+}

@@ -81,10 +81,8 @@ type Store struct {
 }
 
 type Message struct {
-	RemoteAddr   net.Addr
-	Text         string
-	Cmd          ServerCmd
-	TimeStamp    string
-	DeletionTime int64
-	Increment    int64
+	RemoteAddr net.Addr
+	Text       string
+	Cmd        ServerCmd
+	TimeStamp  string
 }

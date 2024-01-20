@@ -25,7 +25,7 @@ func main() {
 
 	server := server.NewServer(address)
 
-	server.HandleServerMessageQueue()
+	go server.HandleServerMessageQueue()
 
 	log.Fatal(server.Start())
 }

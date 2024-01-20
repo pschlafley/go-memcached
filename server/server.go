@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/pschlafley/coding-challenges/go-memcache/types"
-	"github.com/pschlafley/fileFunctions"
 )
 
 type Server struct {
@@ -39,58 +38,46 @@ func NewServer(address string) *Server {
 	}
 }
 
-func openLogFile(fileName, path string) (*os.File, error) {
-	fileWasFound, fN, path, errors := fileFunctions.FindFile(fileName, path)
-
-	if len(errors) > 0 {
-		return nil, fmt.Errorf("errors: %v", errors)
-	}
-
-	if !fileWasFound {
-		return nil, fmt.Errorf("file was found: %v", fileWasFound)
-	}
-
-	file, err := os.OpenFile(fN, os.O_RDWR|os.O_CREATE, 0755)
-
+func (s *Server) OpenLogFile(fileName string) (*os.File, error) {
+	file, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return nil, fmt.Errorf("error opening file: %s Error: %s", path, err)
+		return nil, fmt.Errorf("error opening file: %s Error: %s", fileName, err)
 	}
 
 	return file, nil
 }
 
 func (s *Server) HandleServerMessageQueue() {
+
 	go func() {
-		file, err := openLogFile("server.log", "/")
 
-		defer file.Close()
+		messageQueue := types.NewQueue[*types.Message]()
 
-		if err != nil {
-			log.Fatal(err)
+		for {
+			file, err := s.OpenLogFile("./logs/server.log")
+
+			if err != nil {
+				log.Fatal(err)
+			}
+			msg := <-s.MsgCh
+
+			messageQueue.Enque(&msg)
+
+			node := messageQueue.Head()
+
+			fmtString := fmt.Sprintf("%v %s: %s", node.Value().TimeStamp, node.Value().RemoteAddr, node.Value().Text)
+
+			_, wErr := file.WriteString(fmtString)
+
+			if wErr != nil {
+				log.Fatal(err)
+			}
+
+			messageQueue.Deque()
+
+			file.Close()
+
 		}
-
-		fmt.Println(file.Stat())
-
-		// messageQueue := types.NewQueue[*types.Message]()
-
-		// for {
-		// 	msg := <-s.MsgCh
-
-		// 	messageQueue.Enque(&msg)
-
-		// 	node := messageQueue.Head()
-
-		// 	fmt.Println("---------------------------")
-
-		// 	for node != nil {
-		// 		if time.Now().Unix() > messageQueue.Head().Value().DeletionTime {
-		// 			fmt.Println("Deleted Head")
-		// 			messageQueue.Deque()
-		// 		}
-		// 		fmt.Printf("\r%v %s: %s\r", node.Value().TimeStamp, node.Value().RemoteAddr, node.Value().Text)
-		// 		node = node.Next()
-		// 	}
-		// }
 
 	}()
 }
@@ -210,7 +197,6 @@ func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 			msgStruct.Cmd = types.ServerCmd{}
 			msgStruct.RemoteAddr = conn.RemoteAddr()
 			msgStruct.Text = "Store is at it's maximum capacity!\n"
-			msgStruct.DeletionTime = time.Now().Unix() + int64(60)
 
 			s.MsgCh <- *msgStruct
 			conn.Write([]byte(msgStruct.Text))
@@ -224,6 +210,9 @@ func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 					i++
 				}
 			}
+
+			i = 0
+			break
 		} else {
 			msgStruct.Cmd = types.ServerCmd{
 				Command:   cmd.Command,
@@ -233,9 +222,8 @@ func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 
 			cmdSlice := strings.Split(msgStruct.Cmd.Command, " ")
 
-			msgStruct.Text = fmt.Sprintf("%s %s\n", cmdSlice[0], msgStruct.Cmd.DataBlock)
+			msgStruct.Text = fmt.Sprintf("%s %s %s %s %s\n", cmdSlice[0], cmdSlice[1], cmdSlice[2], cmdSlice[4], msgStruct.Cmd.DataBlock)
 			msgStruct.TimeStamp = time.Now().Format(time.ANSIC)
-			msgStruct.DeletionTime = time.Now().Unix() + int64(60)
 
 			s.MsgCh <- *msgStruct
 			msgStruct.Cmd.Command = ""
@@ -249,7 +237,6 @@ func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 
 	case parsedCmd[0] == "get":
 		result := handleGetData(parsedCmd, s.Store)
-		fmt.Println("Increment: ", msgStruct.Increment)
 
 		if strings.TrimSpace(result) != "END" {
 			msgStruct.Cmd = types.ServerCmd{
@@ -262,9 +249,8 @@ func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 			cmdSlice := strings.Split(msgStruct.Cmd.Command, " ")
 			resultSlice := strings.Split(strings.TrimSpace(result), "\n")
 
-			msgStruct.Text = fmt.Sprintf("%s %s\r", cmdSlice[0], resultSlice[1])
+			msgStruct.Text = fmt.Sprintf("%s: %s %s\r", cmdSlice[0], resultSlice[0], resultSlice[1])
 			msgStruct.TimeStamp = time.Now().Format(time.ANSIC)
-			msgStruct.DeletionTime = time.Now().Unix() + int64(60)
 
 			s.MsgCh <- *msgStruct
 			msgStruct.Cmd.Command = ""
@@ -280,9 +266,8 @@ func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 
 			cmdSlice := strings.Split(msgStruct.Cmd.Command, " ")
 
-			msgStruct.Text = fmt.Sprintf("%s: Failed!\n", cmdSlice[0])
+			msgStruct.Text = fmt.Sprintf("%s: Failed! Key not found!\n", cmdSlice[0])
 			msgStruct.TimeStamp = time.Now().Format(time.ANSIC)
-			msgStruct.DeletionTime = time.Now().Unix() + int64(60)
 
 			s.MsgCh <- *msgStruct
 			msgStruct.Cmd.Command = ""
@@ -296,7 +281,6 @@ func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 			msgStruct.Cmd = types.ServerCmd{}
 			msgStruct.RemoteAddr = conn.RemoteAddr()
 			msgStruct.Text = "Store is at it's maximum capacity!"
-			msgStruct.DeletionTime = time.Now().Unix() + int64(60)
 
 			s.MsgCh <- *msgStruct
 			conn.Write([]byte(msgStruct.Text))
@@ -308,21 +292,22 @@ func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 					i++
 				}
 			}
+			i = 0
+			break
 		} else {
 			msgStruct.Cmd = types.ServerCmd{
 				Command:   cmd.Command,
 				DataBlock: cmd.DataBlock,
 			}
 			msgStruct.RemoteAddr = conn.RemoteAddr()
-			msgStructCmdSlice := strings.Split(msgStruct.Cmd.Command, " ")
+			cmdSlice := strings.Split(msgStruct.Cmd.Command, " ")
 			msgStruct.TimeStamp = time.Now().Format(time.ANSIC)
-			msgStruct.Text = fmt.Sprintf("%s %s\n", msgStructCmdSlice[0], msgStruct.Cmd.DataBlock)
-			msgStruct.DeletionTime = time.Now().Unix() + int64(60)
+			msgStruct.Text = fmt.Sprintf("%s %s %s %s %s\n", cmdSlice[0], cmdSlice[1], cmdSlice[2], cmdSlice[4], msgStruct.Cmd.DataBlock)
 
 			result := handleSetData(*cmd, s.Store)
 
 			if strings.TrimSpace(result) == "END" {
-				msgStruct.Text = fmt.Sprintf("%s %s: Failed! The key %s already exists!\n", msgStructCmdSlice[0], msgStruct.Cmd.DataBlock, msgStructCmdSlice[0])
+				msgStruct.Text = fmt.Sprintf("%s %s: Failed! The key %s already exists!\n", cmdSlice[0], strings.TrimSpace(msgStruct.Cmd.DataBlock), cmdSlice[1])
 			}
 
 			s.MsgCh <- *msgStruct
@@ -335,30 +320,99 @@ func (s *Server) commandParser(cmd *types.ServerCmd, conn net.Conn) {
 		}
 
 	case parsedCmd[0] == "replace" && cmd.DataBlock != "":
+		msgStruct.Cmd = types.ServerCmd{
+			Command:   cmd.Command,
+			DataBlock: cmd.DataBlock,
+		}
+		msgStruct.RemoteAddr = conn.RemoteAddr()
+		cmdSlice := strings.Split(msgStruct.Cmd.Command, " ")
+		msgStruct.TimeStamp = time.Now().Format(time.ANSIC)
+		msgStruct.Text = fmt.Sprintf("%s %s %s %s %s\n", cmdSlice[0], cmdSlice[1], cmdSlice[2], cmdSlice[4], msgStruct.Cmd.DataBlock)
+
 		result := handleReplaceData(*cmd, s.Store)
+
+		if strings.TrimSpace(result) == "NOT_STORED" {
+			msgStruct.Text = fmt.Sprintf("%s %s: Failed! Could not find that key!\n", cmdSlice[0], msgStruct.Cmd.DataBlock)
+		}
+
+		s.MsgCh <- *msgStruct
+
 		conn.Write([]byte(result))
 		cmd.Command = ""
 		cmd.DataBlock = ""
+
 	case parsedCmd[0] == "append" && cmd.DataBlock != "":
+		msgStruct.Cmd = types.ServerCmd{
+			Command:   cmd.Command,
+			DataBlock: cmd.DataBlock,
+		}
+		msgStruct.RemoteAddr = conn.RemoteAddr()
+		cmdSlice := strings.Split(msgStruct.Cmd.Command, " ")
+		msgStruct.TimeStamp = time.Now().Format(time.ANSIC)
+		msgStruct.Text = fmt.Sprintf("%s %s %s %s %s\n", cmdSlice[0], cmdSlice[1], cmdSlice[2], cmdSlice[4], msgStruct.Cmd.DataBlock)
+
 		result := handleAppendData(*cmd, s.Store)
+
+		if strings.TrimSpace(result) == "NOT_STORED" {
+			msgStruct.Text = fmt.Sprintf("%s %s: Failed! Could not find that key!\n", cmdSlice[0], msgStruct.Cmd.DataBlock)
+		}
+
+		s.MsgCh <- *msgStruct
+
 		conn.Write([]byte(result))
 		cmd.Command = ""
 		cmd.DataBlock = ""
+
 	case parsedCmd[0] == "prepend" && cmd.DataBlock != "":
+		msgStruct.Cmd = types.ServerCmd{
+			Command:   cmd.Command,
+			DataBlock: cmd.DataBlock,
+		}
+		msgStruct.RemoteAddr = conn.RemoteAddr()
+		cmdSlice := strings.Split(msgStruct.Cmd.Command, " ")
+		msgStruct.TimeStamp = time.Now().Format(time.ANSIC)
+		msgStruct.Text = fmt.Sprintf("%s %s %s %s %s\n", cmdSlice[0], cmdSlice[1], cmdSlice[2], cmdSlice[4], msgStruct.Cmd.DataBlock)
+
 		result := handlePrependData(*cmd, s.Store)
+
+		if strings.TrimSpace(result) == "NOT_STORED" {
+			msgStruct.Text = fmt.Sprintf("%s %s: Failed! Could not find that key!\n", cmdSlice[0], msgStruct.Cmd.DataBlock)
+		}
+
+		s.MsgCh <- *msgStruct
+
 		conn.Write([]byte(result))
 		cmd.Command = ""
 		cmd.DataBlock = ""
+
 	case parsedCmd[0] == "delete":
+		msgStruct.Cmd = types.ServerCmd{
+			Command:   cmd.Command,
+			DataBlock: cmd.DataBlock,
+		}
+		msgStruct.RemoteAddr = conn.RemoteAddr()
+		cmdSlice := strings.Split(msgStruct.Cmd.Command, " ")
+		msgStruct.TimeStamp = time.Now().Format(time.ANSIC)
+		msgStruct.Text = fmt.Sprintf("%s %s\n", cmdSlice[0], cmdSlice[1])
+
 		result := handleDeleteData(*cmd, s.Store)
+
+		if strings.TrimSpace(result) == "END" {
+			msgStruct.Text = fmt.Sprintf("%s %s: Failed! Could not find that key!\n", cmdSlice[0], msgStruct.Cmd.DataBlock)
+		}
+
+		s.MsgCh <- *msgStruct
+
 		conn.Write([]byte(result))
 		cmd.Command = ""
 		cmd.DataBlock = ""
+
 	case parsedCmd[0] == "increment" && cmd.DataBlock != "":
 		result := handleIncrementStoreSize(*cmd, s.Store)
 		conn.Write([]byte(result))
 		cmd.Command = ""
 		cmd.DataBlock = ""
+
 	case parsedCmd[0] == "decrement" && cmd.DataBlock != "":
 		result := handleDecrementStoreSize(*cmd, s.Store)
 		conn.Write([]byte(result))
@@ -372,10 +426,13 @@ func handleSetData(data types.ServerCmd, store *types.Store) string {
 	flags, fErr := strconv.Atoi(strings.TrimSpace(cmdSlice[2]))
 	key := cmdSlice[1]
 
-	for k := range *store.Db {
-		if k == key {
-			return "END\r\n"
+	if strings.TrimSpace(cmdSlice[0]) == "add" {
+		for k := range *store.Db {
+			if k == key {
+				return "END\r\n"
+			}
 		}
+
 	}
 
 	if fErr != nil {
@@ -509,8 +566,9 @@ func handleAppendData(cmd types.ServerCmd, store *types.Store) string {
 
 	for k, v := range *store.Db {
 		if k == strings.TrimSpace(key) {
-			(*store.Db)[key].DataBlock = strings.TrimSpace(v.DataBlock) + strings.TrimSpace(cmd.DataBlock)
+			(*store.Db)[key].DataBlock = strings.TrimSpace(v.DataBlock) + " " + strings.TrimSpace(cmd.DataBlock)
 			result = "STORED\r\n"
+			return result
 		} else if k != key {
 			result = "NOT_STORED\r\n"
 			return result
@@ -531,7 +589,7 @@ func handlePrependData(cmd types.ServerCmd, store *types.Store) string {
 
 	for k, v := range *store.Db {
 		if k == strings.TrimSpace(key) {
-			(*store.Db)[key].DataBlock = strings.TrimSpace(cmd.DataBlock) + strings.TrimSpace(v.DataBlock)
+			(*store.Db)[key].DataBlock = strings.TrimSpace(cmd.DataBlock) + " " + strings.TrimSpace(v.DataBlock)
 			result = "STORED\r\n"
 		} else if k != key {
 			result = "NOT_STORED\r\n"
