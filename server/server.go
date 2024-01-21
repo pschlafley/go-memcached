@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pschlafley/coding-challenges/go-memcache/types"
@@ -18,6 +19,7 @@ type Server struct {
 	quit       chan struct{}
 	MsgCh      chan types.Message
 	PeerMap    map[net.Addr]string
+	mu         sync.Mutex
 	Store      *types.Store
 }
 
@@ -48,11 +50,13 @@ func (s *Server) OpenLogFile(fileName string) (*os.File, error) {
 }
 
 func (s *Server) HandleServerMessageQueue() {
-
 	go func() {
-
+		// since there could be multiple goroutines reading/writing from the messages queue and to the file
+		// I am using a mutex to lock so that only one goroutine can perform a read/write at a time
+		s.mu.Lock()
+		// since we are doing it outside of the for loop we can safley defer the unlock method
+		defer s.mu.Unlock()
 		messageQueue := types.NewQueue[*types.Message]()
-
 		for {
 			file, err := s.OpenLogFile("./logs/server.log")
 
@@ -76,9 +80,7 @@ func (s *Server) HandleServerMessageQueue() {
 			messageQueue.Deque()
 
 			file.Close()
-
 		}
-
 	}()
 }
 
@@ -426,13 +428,12 @@ func handleSetData(data types.ServerCmd, store *types.Store) string {
 	flags, fErr := strconv.Atoi(strings.TrimSpace(cmdSlice[2]))
 	key := cmdSlice[1]
 
-	if strings.TrimSpace(cmdSlice[0]) == "add" {
+	if strings.TrimSpace(cmdSlice[0]) == "add" || strings.TrimSpace(cmdSlice[0]) == "set" {
 		for k := range *store.Db {
 			if k == key {
 				return "END\r\n"
 			}
 		}
-
 	}
 
 	if fErr != nil {
@@ -547,8 +548,58 @@ func handleReplaceData(cmd types.ServerCmd, store *types.Store) string {
 		} else if string(key) != k {
 			return "NOT_STORED\r\n"
 		} else if string(key) == k {
-			result := handleSetData(cmd, store)
-			return result
+			flags, fErr := strconv.Atoi(strings.TrimSpace(cmdSlice[2]))
+
+			if fErr != nil {
+				return "Error: Flags field is missing or not a valid number, please try again\r\n"
+			}
+
+			byteCt, bCtErr := strconv.Atoi(strings.TrimSpace(cmdSlice[4]))
+
+			if bCtErr != nil {
+				return "Error: Byte Count field is missing or not a valid number, please try again\r\n"
+			}
+
+			expTime, expErr := strconv.ParseInt(strings.TrimSpace(cmdSlice[3]), 0, 64)
+
+			if expErr != nil {
+				return "Error: Exptime field is missing or not a valid number, please try again\r\n"
+			}
+
+			var noreply bool
+
+			if len(cmdSlice) < 6 {
+				noreply = false
+			} else if strings.TrimSpace(cmdSlice[5]) == "noreply" {
+				noreply = true
+			}
+
+			var expirationTime int64
+
+			if expTime == 0 {
+				expirationTime = 0
+			} else if expTime > 0 {
+				expirationTime = time.Now().Unix() + expTime
+			} else if expTime < 0 {
+				expirationTime = -1
+			}
+
+			// handle if flags and byte are undefined
+			dataArgs := &types.DataArgs{
+				DataBlock: cmd.DataBlock,
+				Flags:     flags,
+				Exptime:   expirationTime,
+				ByteCt:    byteCt,
+				Noreply:   noreply,
+			}
+
+			(*store.Db)[key] = dataArgs
+
+			if noreply {
+				return ""
+			}
+
+			return "STORED\r\n"
 		}
 	}
 
