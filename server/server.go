@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"net"
@@ -40,13 +41,23 @@ func NewServer(address string) *Server {
 	}
 }
 
-func (s *Server) OpenLogFile(fileName string) (*os.File, error) {
+func OpenLogFile(fileName string) (*os.File, error) {
 	file, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("error opening file: %s Error: %s", fileName, err)
 	}
 
 	return file, nil
+}
+
+func handleRemoveLogs(file *os.File) error {
+	buf := bufio.NewScanner(file)
+
+	for i := 0; i < 2; i++ {
+		buf.Scan()
+	}
+
+	return nil
 }
 
 func (s *Server) HandleServerMessageQueue() {
@@ -58,11 +69,12 @@ func (s *Server) HandleServerMessageQueue() {
 		defer s.mu.Unlock()
 		messageQueue := types.NewQueue[*types.Message]()
 		for {
-			file, err := s.OpenLogFile("./logs/server.log")
+			file, err := OpenLogFile("./logs/server.log")
 
 			if err != nil {
 				log.Fatal(err)
 			}
+
 			msg := <-s.MsgCh
 
 			messageQueue.Enque(&msg)
@@ -71,13 +83,15 @@ func (s *Server) HandleServerMessageQueue() {
 
 			fmtString := fmt.Sprintf("%v %s: %s", node.Value().TimeStamp, node.Value().RemoteAddr, node.Value().Text)
 
-			_, wErr := file.WriteString(fmtString)
+			_, wErr := file.WriteString(strings.TrimSpace(fmtString))
 
 			if wErr != nil {
-				log.Fatal(err)
+				log.Fatal(wErr)
 			}
 
 			messageQueue.Deque()
+
+			// handleRemoveLogs(file)
 
 			file.Close()
 		}

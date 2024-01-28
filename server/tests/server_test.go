@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -236,4 +237,14 @@ func TestOpenLogFile(t *testing.T) {
 		t.Log(file.Stat())
 	}
 
+}
+
+func handleRemoveLogs(file *os.File) error {
+	buf := bufio.NewScanner(file)
+
+	for i := 0; i < 2; i++ {
+		buf.Scan()
+	}
+
+	return nil
 }
